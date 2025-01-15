@@ -1,0 +1,7 @@
+.clion/
+.cmake/
+.idea/
+target/
+cmake-build*/
+
+**/*.iml
