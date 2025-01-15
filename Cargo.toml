@@ -16,7 +16,6 @@ exclude = [
 crate-type = ["rlib"]
 
 [dependencies]
-derive_more = { version = "1.0.0", features = ["display"] }
 fx-handle = "0.1.0"
 log = "0.4.20"
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "sync"] }
