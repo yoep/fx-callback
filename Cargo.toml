@@ -7,6 +7,10 @@ license-file = "LICENSE"
 description = "A subscription based callback to inform subscribers about relevant data events within structs."
 repository = "https://github.com/yoep/fx-callback"
 readme = "README.md"
+exclude = [
+    "/.config",
+    "/.github",
+]
 
 [lib]
 crate-type = ["rlib"]
