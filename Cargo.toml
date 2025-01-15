@@ -1,0 +1,21 @@
+[package]
+name = "fx-callback"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license-file = "LICENSE"
+description = "A subscription based callback to inform subscribers about relevant data events within structs."
+repository = "https://github.com/yoep/fx-callback"
+readme = "README.md"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+derive_more = { version = "1.0.0", features = ["display"] }
+fx-handle = "0.1.0"
+log = "0.4.20"
+tokio = { version = "1.32.0", features = ["rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+log4rs = "1.3.0"
