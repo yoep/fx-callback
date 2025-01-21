@@ -116,7 +116,7 @@ pub use callback::*;
 mod callback;
 
 #[cfg(test)]
-pub mod tests {
+pub(crate) mod tests {
     use log::LevelFilter;
     use log4rs::append::console::ConsoleAppender;
     use log4rs::config::{Appender, Root};
