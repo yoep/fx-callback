@@ -138,7 +138,7 @@ pub(crate) mod tests {
     }
 
     /// Initializes the logger with the specified log level.
-    pub fn init_logger_level(level: LevelFilter) {
+    pub(crate) fn init_logger_level(level: LevelFilter) {
         INIT.call_once(|| {
             log4rs::init_config(Config::builder()
                 .appender(Appender::builder().build("stdout", Box::new(ConsoleAppender::builder()
