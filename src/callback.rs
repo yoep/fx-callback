@@ -1,5 +1,5 @@
 use fx_handle::Handle;
-use log::{debug, trace, warn};
+use log::{debug, error, trace, warn};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -34,8 +34,8 @@ pub type Subscriber<T> = UnboundedSender<Arc<T>>;
 ///     Bar,
 /// }
 ///
-/// async fn register_callback(shared_runtime: Arc<Runtime>) {
-///     let callback = MultiThreadedCallback::<MyEvent>::new(shared_runtime);
+/// async fn register_callback() {
+///     let callback = MultiThreadedCallback::<MyEvent>::new();
 ///     let mut receiver = callback.subscribe();
 ///
 ///     let event = receiver.recv().await.unwrap();
@@ -127,6 +127,7 @@ where
     T: Debug + Send + Sync,
 {
     base: Arc<BaseCallback<T>>,
+    runtime: Arc<Mutex<Option<Runtime>>>,
 }
 
 impl<T> Callback<T> for MultiThreadedCallback<T>
@@ -134,7 +135,118 @@ where
     T: Debug + Send + Sync,
 {
     fn subscribe(&self) -> Subscription<T> {
-        let mut mutex = self.base.callbacks.lock().expect("failed to acquire lock");
+        self.base.subscribe()
+    }
+
+    fn subscribe_with(&self, subscriber: Subscriber<T>) {
+        self.base.subscribe_with(subscriber)
+    }
+}
+
+impl<T> MultiThreadedCallback<T>
+where
+    T: Debug + Send + Sync + 'static,
+{
+    /// Creates a new multithreaded callback.
+    pub fn new() -> Self {
+        Self {
+            base: Arc::new(BaseCallback::<T>::new()),
+            runtime: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Invoke the currently registered callbacks and inform them of the given value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to invoke the callbacks with.
+    pub fn invoke(&self, value: T) {
+        let inner = self.base.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                // spawn the invocation operation in a new thread
+                tokio::spawn(async move {
+                    inner.invoke(value);
+                });
+            }
+            Err(_) => match self.runtime.lock() {
+                Ok(mut runtime) => {
+                    runtime
+                        .get_or_insert_with(|| Runtime::new().unwrap())
+                        .spawn(async move {
+                            inner.invoke(value);
+                        });
+                }
+                Err(e) => error!("Failed to acquire lock: {}", e),
+            },
+        }
+    }
+}
+
+/// A single threaded or current threaded callback holder.
+///
+/// This callback holder will invoke the given events on the current thread, thus blocking the caller thread for other tasks.
+#[derive(Debug, Clone)]
+pub struct SingleThreadedCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    base: Arc<BaseCallback<T>>,
+}
+
+impl<T> SingleThreadedCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    /// Create a new single/current threaded callback holder.
+    pub fn new() -> Self {
+        Self {
+            base: Arc::new(BaseCallback::<T>::new()),
+        }
+    }
+
+    /// Invoke the currently registered callbacks and inform them of the given value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to invoke the callbacks with.
+    pub fn invoke(&self, value: T) {
+        self.base.invoke(value)
+    }
+}
+
+impl<T> Callback<T> for SingleThreadedCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    fn subscribe(&self) -> Subscription<T> {
+        self.base.subscribe()
+    }
+
+    fn subscribe_with(&self, subscriber: Subscriber<T>) {
+        self.base.subscribe_with(subscriber)
+    }
+}
+
+struct BaseCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    callbacks: Mutex<HashMap<CallbackHandle, UnboundedSender<Arc<T>>>>,
+}
+
+impl<T> BaseCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    fn new() -> Self {
+        Self {
+            callbacks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn subscribe(&self) -> Subscription<T> {
+        let mut mutex = self.callbacks.lock().expect("failed to acquire lock");
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let handle = CallbackHandle::new();
         mutex.insert(handle, tx);
@@ -144,75 +256,38 @@ where
     }
 
     fn subscribe_with(&self, subscriber: Subscriber<T>) {
-        let mut mutex = self.base.callbacks.lock().expect("failed to acquire lock");
+        let mut mutex = self.callbacks.lock().expect("failed to acquire lock");
         let handle = CallbackHandle::new();
         mutex.insert(handle, subscriber);
         drop(mutex);
         trace!("Added callback {} to {:?}", handle, self);
     }
-}
 
-impl<T> MultiThreadedCallback<T>
-where
-    T: Debug + Send + Sync + 'static,
-{
-    /// Creates a new multithreaded callback.
-    pub fn new(runtime: Arc<Runtime>) -> Self {
-        Self {
-            base: Arc::new(BaseCallback::<T>::new(runtime)),
+    fn invoke(&self, value: T) {
+        let mut mutex = self.callbacks.lock().expect("failed to acquire lock");
+        let value = Arc::new(value);
+
+        trace!(
+            "Invoking a total of {} callbacks for {:?}",
+            mutex.len(),
+            *value
+        );
+
+        let handles_to_remove: Vec<CallbackHandle> = mutex
+            .iter()
+            .map(|(handle, callback)| {
+                BaseCallback::invoke_callback(handle, callback, value.clone())
+            })
+            .flat_map(|e| e)
+            .collect();
+
+        let total_handles = handles_to_remove.len();
+        for handle in handles_to_remove {
+            mutex.remove(&handle);
         }
-    }
 
-    /// Invokes the callback with the given value.
-    pub fn invoke(&self, value: T) {
-        let inner = self.base.clone();
-        // spawn the invocation operation in a new thread
-        self.base.runtime.spawn(async move {
-            let mut mutex = inner.callbacks.lock().expect("failed to acquire lock");
-            let value = Arc::new(value);
-
-            trace!(
-                "Invoking a total of {} callbacks for {:?}",
-                mutex.len(),
-                *value
-            );
-
-            let handles_to_remove: Vec<CallbackHandle> = mutex
-                .iter()
-                .map(|(handle, callback)| {
-                    BaseCallback::invoke_callback(handle, callback, value.clone())
-                })
-                .flat_map(|e| e)
-                .collect();
-
-            let total_handles = handles_to_remove.len();
-            for handle in handles_to_remove {
-                mutex.remove(&handle);
-            }
-
-            if total_handles > 0 {
-                debug!("Removed a total of {} callbacks", total_handles);
-            }
-        });
-    }
-}
-
-struct BaseCallback<T>
-where
-    T: Debug + Send + Sync,
-{
-    callbacks: Mutex<HashMap<CallbackHandle, UnboundedSender<Arc<T>>>>,
-    runtime: Arc<Runtime>,
-}
-
-impl<T> BaseCallback<T>
-where
-    T: Debug + Send + Sync,
-{
-    fn new(runtime: Arc<Runtime>) -> Self {
-        Self {
-            callbacks: Mutex::new(HashMap::new()),
-            runtime,
+        if total_handles > 0 {
+            debug!("Removed a total of {} callbacks", total_handles);
         }
     }
 
@@ -266,19 +341,45 @@ mod tests {
     use crate::init_logger;
     use std::sync::mpsc::channel;
     use std::time::Duration;
+    use tokio::{select, time};
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Event {
         Foo,
     }
 
-    #[test]
-    fn test_invoke() {
+    #[tokio::test]
+    async fn test_multi_threaded_invoke() {
         init_logger!();
-        let runtime = Arc::new(Runtime::new().unwrap());
+        let expected_result = Event::Foo;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let callback = MultiThreadedCallback::<Event>::new();
+
+        let mut receiver = callback.subscribe();
+        tokio::spawn(async move {
+            if let Some(e) = receiver.recv().await {
+                let _ = tx.send(e).await;
+            }
+        });
+
+        callback.invoke(expected_result.clone());
+        let result = select! {
+            _ = time::sleep(Duration::from_millis(150)) => {
+                panic!("Callback invocation receiver timed out")
+            },
+            Some(result) = rx.recv() => result,
+        };
+
+        assert_eq!(expected_result, *result);
+    }
+
+    #[test]
+    fn test_multi_threaded_invoke_without_runtime() {
+        init_logger!();
         let expected_result = Event::Foo;
         let (tx, rx) = channel();
-        let callback = MultiThreadedCallback::<Event>::new(runtime.clone());
+        let runtime = Runtime::new().unwrap();
+        let callback = MultiThreadedCallback::<Event>::new();
 
         let mut receiver = callback.subscribe();
         runtime.spawn(async move {
@@ -293,15 +394,40 @@ mod tests {
         assert_eq!(expected_result, *result);
     }
 
-    #[test]
-    fn test_invoke_dropped_receiver() {
+    #[tokio::test]
+    async fn test_invoke_dropped_receiver() {
         init_logger!();
-        let runtime = Arc::new(Runtime::new().unwrap());
         let expected_result = Event::Foo;
-        let (tx, rx) = channel();
-        let callback = MultiThreadedCallback::<Event>::new(runtime.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let callback = MultiThreadedCallback::<Event>::new();
 
         let _ = callback.subscribe();
+        let mut receiver = callback.subscribe();
+        tokio::spawn(async move {
+            if let Some(e) = receiver.recv().await {
+                let _ = tx.send(e).await;
+            }
+        });
+
+        callback.invoke(expected_result.clone());
+        let result = select! {
+            _ = time::sleep(Duration::from_millis(150)) => {
+                panic!("Callback invocation receiver timed out")
+            },
+            Some(result) = rx.recv() => result,
+        };
+
+        assert_eq!(expected_result, *result);
+    }
+
+    #[test]
+    fn test_single_threaded_invoke() {
+        init_logger!();
+        let expected_result = Event::Foo;
+        let runtime = Runtime::new().unwrap();
+        let (tx, rx) = channel();
+        let callback = SingleThreadedCallback::new();
+
         let mut receiver = callback.subscribe();
         runtime.spawn(async move {
             if let Some(e) = receiver.recv().await {
