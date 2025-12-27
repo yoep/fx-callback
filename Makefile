@@ -6,10 +6,10 @@ prerequisites: ## Install the Cargo requirements for testing
 	@cargo install cargo-llvm-cov
 
 test: prerequisites ## Test the cargo project
-	@cargo llvm-cov --lcov --output-path target/lcov.info nextest
+	@cargo llvm-cov --lcov --output-path target/lcov.info nextest --all-features
 
 cov: ## Test the cargo project with coverage reporting to stdout
-	@cargo llvm-cov nextest
+	@cargo llvm-cov nextest --all-features
 
 build: ## Build the cargo project
 	@cargo build
@@ -17,9 +17,5 @@ build: ## Build the cargo project
 build-release: ## Build the release version of the cargo project
 	@cargo build --release
 
-bump-dependencies: ## Install required bump dependencies
-	@$(PYTHON) -m pip install --upgrade pip
-	@pip install bump2version --user
-
-bump-%: bump-dependencies ## Bump the (major, minor, patch) version of the application
-	@bumpversion $*
+bump-%: ## Bump the (major, minor, patch) version of the application
+	@bump-my-version bump $*
