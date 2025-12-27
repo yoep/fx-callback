@@ -2,10 +2,8 @@
 
 prerequisites: ## Install the Cargo requirements for testing
 	@echo Installing Cargo plugins
-	@cargo install cbindgen
 	@cargo install cargo-nextest
 	@cargo install cargo-llvm-cov
-	@cargo install grcov
 
 test: prerequisites ## Test the cargo project
 	@cargo llvm-cov --lcov --output-path target/lcov.info nextest
