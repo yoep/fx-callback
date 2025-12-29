@@ -121,7 +121,7 @@ where
 ///     }
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MultiThreadedCallback<T>
 where
     T: Debug + Send + Sync,
@@ -140,6 +140,18 @@ where
 
     fn subscribe_with(&self, subscriber: Subscriber<T>) {
         self.base.subscribe_with(subscriber)
+    }
+}
+
+impl<T> Clone for MultiThreadedCallback<T>
+where
+    T: Debug + Send + Sync,
+{
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            runtime: self.runtime.clone(),
+        }
     }
 }
 
@@ -348,6 +360,11 @@ mod tests {
         Foo,
     }
 
+    #[derive(Debug, PartialEq)]
+    enum NoneCloneEvent {
+        Bar,
+    }
+
     #[tokio::test]
     async fn test_multi_threaded_invoke() {
         init_logger!();
@@ -418,6 +435,30 @@ mod tests {
         };
 
         assert_eq!(expected_result, *result);
+    }
+
+    #[tokio::test]
+    async fn test_non_cloneable_type() {
+        init_logger!();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let callback = MultiThreadedCallback::<NoneCloneEvent>::new();
+
+        let mut receiver = callback.subscribe();
+        tokio::spawn(async move {
+            if let Some(e) = receiver.recv().await {
+                let _ = tx.send(e).await;
+            }
+        });
+
+        callback.invoke(NoneCloneEvent::Bar);
+        let result = select! {
+            _ = time::sleep(Duration::from_millis(150)) => {
+                panic!("Callback invocation receiver timed out")
+            },
+            Some(result) = rx.recv() => result,
+        };
+
+        assert_eq!(NoneCloneEvent::Bar, *result);
     }
 
     #[test]
