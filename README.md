@@ -5,8 +5,8 @@
 [![License: Apache-2.0](https://img.shields.io/github/license/yoep/fx-callback)](./LICENSE)
 [![codecov](https://codecov.io/gh/yoep/fx-callback/branch/master/graph/badge.svg?token=A801IOOZAH)](https://codecov.io/gh/yoep/fx-callback)
 
-A subscription based callback for data events that might occur within one or more structs.
-It is mainly used within the FX landscape to allow events to be published between multiple structs.
+As of v2+, the `fx-callback` crate was refactored to be a simple wrapper around the `broadcast` feature of tokio.
+If you're still using this crate, it's recommended to switch to `tokio::sync::broadcast`.
 
 ## Example
 
@@ -35,10 +35,6 @@ impl Callback<MyEvent> for Example {
     fn subscribe(&self) -> Subscription<MyEvent> {
         self.callbacks.subscribe()
     }
-
-    fn subscribe_with(&self, subscriber: Subscriber<MyEvent>) {
-        self.callbacks.subscribe_with(subscriber)
-    }
 }
 ```
 
@@ -65,10 +61,6 @@ impl Callback<MyEvent> for MyStruct {
     fn subscribe(&self) -> Subscription<MyEvent> {
         self.callbacks.subscribe()
     }
-    
-    fn subscribe_with(&self, subscriber: Subscriber<MyEvent>) {
-        self.callbacks.subscribe_with(subscriber)
-    }
 }
 ```
 
@@ -87,24 +79,32 @@ impl MyStruct {
 The interested subscriber can subscribe to the interested event of a struct that implements the `Callback` trait.
 
 ```rust
-use fx_callback::{Callback, MultiThreadedCallback, Subscriber, Subscription};
-use tokio::runtime::Runtime;
+use fx_callback::{Callback, MultiThreadedCallback, Subscription};
+use std::io;
 
-fn main() {
-    let runtime = Runtime::new().unwrap();
+#[tokio::main]
+async fn main() -> Result<(), io::Error>{
     let struct_with_callback = MyStruct::new();
     
     let mut receiver = struct_with_callback.subscribe();
-    runtime.spawn(async move {
-       loop {
-           if let Some(event) = receiver.recv().await {
-               println!("Received event: {}", event);
-           } else {
-               break;
-           }
-       } 
+    tokio::spawn(async move {
+       while let Ok(event) = receiver.recv().await {
+           println!("Received event: {}", event);
+       }
     });
 
     struct_with_callback.invoke_event();
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct MyStruct {
+    callbacks: MultiThreadedCallback<MyEvent>,
+}
+
+impl Callback<MyEvent> for MyStruct {
+    fn subscribe(&self) -> Subscription<MyEvent> {
+        self.callbacks.subscribe()
+    }
 }
 ```

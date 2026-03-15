@@ -11,7 +11,7 @@ It is mainly used within the FX landscape to allow events to be published betwee
 ## Example
 
 ```rust
-use fx_callback::{Callback, MultiThreadedCallback, Subscriber, Subscription};
+use fx_callback::{Callback, MultiThreadedCallback, Subscription};
 
 /// The events of the struct that informs subscribers about changes to the data within the struct.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,10 +34,6 @@ impl Example {
 impl Callback<MyEvent> for Example {
     fn subscribe(&self) -> Subscription<MyEvent> {
         self.callbacks.subscribe()
-    }
-
-    fn subscribe_with(&self, subscriber: Subscriber<MyEvent>) {
-        self.callbacks.subscribe_with(subscriber)
     }
 }
 ```
@@ -87,25 +83,33 @@ impl MyStruct {
 The interested subscriber can subscribe to the interested event of a struct that implements the `Callback` trait.
 
 ```rust
-use fx_callback::{Callback, MultiThreadedCallback, Subscriber, Subscription};
-use tokio::runtime::Runtime;
+use fx_callback::{Callback, MultiThreadedCallback, Subscription};
+use std::io;
 
-fn main() {
-    let runtime = Runtime::new().unwrap();
+#[tokio::main]
+async fn main() -> Result<(), io::Error>{
     let struct_with_callback = MyStruct::new();
 
     let mut receiver = struct_with_callback.subscribe();
-    runtime.spawn(async move {
-       loop {
-           if let Some(event) = receiver.recv().await {
-               println!("Received event: {}", event);
-           } else {
-               break;
-           }
+    tokio::spawn(async move {
+       while let Ok(event) = receiver.recv().await {
+           println!("Received event: {}", event);
        }
     });
 
     struct_with_callback.invoke_event();
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct MyStruct {
+    callbacks: MultiThreadedCallback<MyEvent>,
+}
+
+impl Callback<MyEvent> for MyStruct {
+    fn subscribe(&self) -> Subscription<MyEvent> {
+        self.callbacks.subscribe()
+    }
 }
 ```
 */
