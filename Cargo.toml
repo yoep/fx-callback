@@ -21,8 +21,8 @@ crate-type = ["rlib"]
 [dependencies]
 fx-handle = "1.0.0"
 log = "0.4"
-tokio = { version = "1.48", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1.50", features = ["rt-multi-thread", "sync"] }
 
 [dev-dependencies]
 log4rs = "1.4"
-tokio = { version = "1.48", features = ["rt", "macros", "time"] }
+tokio = { version = "1.50", features = ["rt", "macros", "time"] }
