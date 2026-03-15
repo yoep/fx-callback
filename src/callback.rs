@@ -350,7 +350,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::init_logger;
     use std::sync::mpsc::channel;
     use std::time::Duration;
     use tokio::{select, time};
